@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cpp-parser playground</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="d3.min.js"></script>
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <span class="brand-name">cpp-parser</span>
+    <span class="brand-sub">Flex + Bison, підмножина C++</span>
+  </div>
+  <label class="field">
+    <span>Приклад</span>
+    <select id="examples"></select>
+  </label>
+  <label class="field grow">
+    <span>stdin</span>
+    <input id="stdin" type="text" placeholder="вхідні дані для cin, через пробіл" spellcheck="false">
+  </label>
+  <button id="run" class="run">Виконати <kbd>⌘↵</kbd></button>
+</header>
+
+<main class="work">
+  <section class="editor-pane">
+    <div class="editor">
+      <div id="gutter" class="gutter" aria-hidden="true"></div>
+      <textarea id="code" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
+    </div>
+    <div id="status" class="status">Напишіть код і натисніть «Виконати»</div>
+  </section>
+
+  <section class="result-pane">
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="output" role="tab">Вивід</button>
+      <button class="tab" data-tab="ast" role="tab">AST</button>
+      <button class="tab" data-tab="python" role="tab">Python</button>
+      <button class="tab" data-tab="messages" role="tab">Повідомлення<span id="msg-count" class="count"></span></button>
+    </nav>
+
+    <div id="panel-output" class="panel active">
+      <div class="columns">
+        <div class="col">
+          <div class="col-title">Інтерпретатор <span id="interp-exit" class="exit"></span></div>
+          <pre id="interp-out" class="out"></pre>
+        </div>
+        <div class="col">
+          <div class="col-title">Згенерований Python <span id="py-exit" class="exit"></span></div>
+          <pre id="py-out" class="out"></pre>
+        </div>
+      </div>
+      <div id="match" class="match"></div>
+    </div>
+
+    <div id="panel-ast" class="panel">
+      <div class="ast-tools">
+        <button id="expand-all" class="ghost">Розгорнути все</button>
+        <button id="collapse-all" class="ghost">Згорнути до функцій</button>
+        <button id="fit" class="ghost">Вписати</button>
+        <span id="ast-stats" class="muted"></span>
+        <span class="legend">
+          <i style="--c:#3F6ADB"></i>декларації
+          <i style="--c:#2C9A5F"></i>оператори
+          <i style="--c:#E0862A"></i>вирази
+          <i style="--c:#9A5FB8"></i>літерали
+          <i style="--c:#8A939E"></i>типи
+        </span>
+      </div>
+      <div class="ast-wrap">
+        <svg id="ast"></svg>
+        <div id="ast-empty" class="empty">AST з'явиться після розбору</div>
+        <div id="tip" class="tip"></div>
+      </div>
+    </div>
+
+    <div id="panel-python" class="panel">
+      <div class="ast-tools">
+        <button id="copy-py" class="ghost">Скопіювати</button>
+        <button id="download-py" class="ghost">Завантажити .py</button>
+      </div>
+      <pre id="py-code" class="code"></pre>
+    </div>
+
+    <div id="panel-messages" class="panel">
+      <pre id="messages" class="out"></pre>
+    </div>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

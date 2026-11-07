@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<title>AST Visualizer — cpp-parser</title>
+<script src="d3.min.js"></script>
+<style>
+  :root { --bg:#fafafa; --fg:#222; --panel:#fff; --line:#bbb; --muted:#777; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--fg); }
+  header { display:flex; gap:12px; align-items:center; padding:10px 16px; background:var(--panel); border-bottom:1px solid #ddd; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0 12px 0 0; }
+  button, select { padding:5px 10px; border:1px solid #ccc; border-radius:6px; background:#fff; cursor:pointer; font-size:13px; }
+  button:hover { background:#f0f0f0; }
+  #legend { display:flex; gap:10px; margin-left:auto; font-size:12px; flex-wrap:wrap; }
+  #legend span { display:inline-flex; align-items:center; gap:4px; }
+  #legend i { width:12px; height:12px; border-radius:50%; display:inline-block; }
+  #wrap { position:relative; height: calc(100vh - 52px); }
+  svg { width:100%; height:100%; display:block; cursor:grab; }
+  .link { fill:none; stroke:var(--line); stroke-width:1.4px; }
+  .node circle { stroke:#fff; stroke-width:1.5px; cursor:pointer; }
+  .node text { font-size:12px; pointer-events:none; }
+  .node text.val { font-weight:600; }
+  .node.collapsed circle { stroke:#333; stroke-width:2.5px; }
+  #tip { position:absolute; display:none; background:#222; color:#fff; padding:6px 9px; border-radius:6px; font-size:12px; pointer-events:none; white-space:pre; }
+  #paste { position:absolute; right:12px; top:12px; width:320px; display:none; background:var(--panel); border:1px solid #ccc; border-radius:8px; padding:10px; }
+  textarea { width:100%; height:160px; font-family:monospace; font-size:11px; }
+  #stats { font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>AST — підмножина C++</h1>
+  <button id="expandAll">Розгорнути все</button>
+  <button id="collapseAll">Згорнути до функцій</button>
+  <button id="fit">Вписати</button>
+  <button id="togglePaste">Вставити JSON…</button>
+  <span id="stats"></span>
+  <div id="legend">
+    <span><i style="background:#4e79a7"></i>декларації</span>
+    <span><i style="background:#59a14f"></i>оператори</span>
+    <span><i style="background:#f28e2b"></i>вирази</span>
+    <span><i style="background:#b07aa1"></i>літерали</span>
+    <span><i style="background:#9c9c9c"></i>типи/службові</span>
+  </div>
+</header>
+<div id="wrap">
+  <svg></svg>
+  <div id="tip"></div>
+  <div id="paste">
+    <div style="font-size:12px;margin-bottom:6px">Вихід <code>cppparser file.cpp --print</code> або вміст <code>--ast</code>:</div>
+    <textarea id="jsonIn" placeholder='{"type":"Program","children":[...]}'></textarea>
+    <button id="loadJson" style="margin-top:6px">Завантажити</button>
+  </div>
+</div>
+<script src="ast.js"></script>
+<script>
+const CATEGORY = {
+  decl: new Set(["Program","FuncDecl","MethodDef","Method","MethodProto","FuncProto","ClassDecl","Ctor","Field","VarDecl","ObjDecl","ArrayDecl","Decls","Param","Params","Base","InitList","Init","ClassRef","Dim"]),
+  stmt: new Set(["Block","ExprStmt","If","While","DoWhile","For","Return","Break","Continue","Cout","Cin","Empty","Endl"]),
+  expr: new Set(["BinOp","UnOp","Assign","IncDec","Ternary","Cast","Call","MethodCall","Member","Index","Ident","This","Args"]),
+  lit:  new Set(["IntLit","DoubleLit","StringLit","CharLit","BoolLit"]),
+};
+const COLORS = { decl:"#4e79a7", stmt:"#59a14f", expr:"#f28e2b", lit:"#b07aa1", other:"#9c9c9c" };
+function cat(t){ for (const k in CATEGORY) if (CATEGORY[k].has(t)) return k; return "other"; }
+function label(d){
+  const t = d.data.type, v = d.data.value;
+  if (!v) return [t, ""];
+  if (t === "StringLit") return [t, JSON.stringify(v)];
+  if (t === "CharLit") return [t, "'" + v + "'"];
+  return [t, v];
+}
+
+const svg = d3.select("svg");
+const g = svg.append("g");
+const gLinks = g.append("g"), gNodes = g.append("g");
+const tip = document.getElementById("tip");
+const zoom = d3.zoom().scaleExtent([0.05, 4]).on("zoom", e => g.attr("transform", e.transform));
+svg.call(zoom);
+
+let root, i = 0;
+const DX = 26, DY = 190;
+const tree = d3.tree().nodeSize([DX, DY]);
+
+function load(data){
+  root = d3.hierarchy(data);
+  root.x0 = 0; root.y0 = 0;
+  root.each(d => { d.id = ++i; });
+  collapseToFunctions();
+  update(root);
+  fit();
+}
+
+function collapseToFunctions(){
+  root.descendants().forEach(d => {
+    if (d.children) d._children = d.children, d.children = null;
+  });
+  root.children = root._children; root._children = null;
+  (root.children || []).forEach(c => {
+    if (["ClassDecl"].includes(c.data.type)) { c.children = c._children; c._children = null; }
+  });
+}
+
+function expandAll(){ root.descendants().forEach(d => { if (d._children) { d.children = d._children; d._children = null; } }); update(root); }
+
+function update(source){
+  tree(root);
+  const nodes = root.descendants(), links = root.links();
+  const t = svg.transition().duration(350);
+
+  const node = gNodes.selectAll("g.node").data(nodes, d => d.id);
+  const nodeEnter = node.enter().append("g")
+    .attr("class", "node")
+    .attr("transform", `translate(${source.y0},${source.x0})`)
+    .on("click", (e, d) => { if (d.children) { d._children = d.children; d.children = null; } else if (d._children) { d.children = d._children; d._children = null; } update(d); })
+    .on("mousemove", (e, d) => {
+      tip.style.display = "block";
+      tip.style.left = (e.offsetX + 14) + "px"; tip.style.top = (e.offsetY + 14) + "px";
+      const kids = (d.children || d._children || []).length;
+      tip.textContent = `${d.data.type}${d.data.value ? " = " + d.data.value : ""}\nline: ${d.data.line ?? "?"}\nchildren: ${kids}\nsubtree size: ${d.descendants().length}`;
+    })
+    .on("mouseleave", () => tip.style.display = "none");
+  nodeEnter.append("circle").attr("r", 1e-6).attr("fill", d => COLORS[cat(d.data.type)]);
+  nodeEnter.append("text").attr("class","typ").attr("dy", "-0.25em").attr("x", 10).text(d => label(d)[0]);
+  nodeEnter.append("text").attr("class","val").attr("dy", "0.95em").attr("x", 10).text(d => label(d)[1]).attr("fill", d => COLORS[cat(d.data.type)]);
+
+  const nodeUpdate = nodeEnter.merge(node);
+  nodeUpdate.classed("collapsed", d => !!d._children);
+  nodeUpdate.transition(t).attr("transform", d => `translate(${d.y},${d.x})`);
+  nodeUpdate.select("circle").transition(t).attr("r", d => d._children ? 7 : 5.5);
+
+  node.exit().transition(t).attr("transform", `translate(${source.y},${source.x})`).remove()
+      .select("circle").attr("r", 1e-6);
+
+  const link = gLinks.selectAll("path.link").data(links, d => d.target.id);
+  const diag = d3.linkHorizontal().x(d => d.y).y(d => d.x);
+  link.enter().append("path").attr("class","link")
+    .attr("d", () => { const o = {x: source.x0, y: source.y0}; return diag({source:o, target:o}); })
+    .merge(link).transition(t).attr("d", diag);
+  link.exit().transition(t).attr("d", () => { const o = {x: source.x, y: source.y}; return diag({source:o, target:o}); }).remove();
+
+  nodes.forEach(d => { d.x0 = d.x; d.y0 = d.y; });
+  document.getElementById("stats").textContent = `вузлів усього: ${root.descendants().length} / у дереві: ${root.descendants().filter(d=>true).length}`;
+  const total = countAll(root);
+  document.getElementById("stats").textContent = `показано ${nodes.length} з ${total} вузлів`;
+}
+function countAll(d){ return 1 + ((d.children || d._children || []).reduce((s,c) => s + countAll(c), 0)); }
+
+function fit(){
+  const b = g.node().getBBox(), w = svg.node().clientWidth, h = svg.node().clientHeight;
+  const k = Math.min(0.95 * w / (b.width + 160), 0.95 * h / (b.height + 40), 1.5);
+  const tx = w/2 - k * (b.x + b.width/2), ty = h/2 - k * (b.y + b.height/2);
+  svg.transition().duration(400).call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
+}
+
+document.getElementById("expandAll").onclick = () => { expandAll(); setTimeout(fit, 380); };
+document.getElementById("collapseAll").onclick = () => { collapseToFunctions(); update(root); setTimeout(fit, 380); };
+document.getElementById("fit").onclick = fit;
+document.getElementById("togglePaste").onclick = () => { const p = document.getElementById("paste"); p.style.display = p.style.display === "block" ? "none" : "block"; };
+document.getElementById("loadJson").onclick = () => {
+  try { load(JSON.parse(document.getElementById("jsonIn").value)); document.getElementById("paste").style.display = "none"; }
+  catch (e) { alert("Невалідний JSON: " + e.message); }
+};
+
+if (window.AST_DATA) load(window.AST_DATA);
+else { document.getElementById("paste").style.display = "block"; document.getElementById("stats").textContent = "ast.js не знайдено — згенеруйте: ./cppparser file.cpp --viz viz/ast.js"; }
+</script>
+</body>
+</html>
